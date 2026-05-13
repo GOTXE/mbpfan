@@ -9,6 +9,7 @@
 #
 
 set -e
+set +o pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$REPO_DIR/logs"
@@ -29,10 +30,10 @@ declare -a rpms=(2100 2400 2600 2800 3200 3500 3900 4300 4800 5500 6100)
 
 get_top_processes() {
     # Get top 3 processes by CPU usage (comma-separated, quoted)
-    ps aux --sort=-%cpu | tail -n +2 | head -3 | \
-        awk '{printf "%s(%.1f%%);", $11, $3}' | \
-        sed 's/;$//' | \
-        sed 's/;/|/g'
+    ps aux --sort=-%cpu 2>/dev/null | tail -n +2 | head -3 | \
+        awk '{printf "%s(%.1f%%);", $11, $3}' 2>/dev/null | \
+        sed 's/;$//' 2>/dev/null | \
+        sed 's/;/|/g' 2>/dev/null || echo ""
 }
 
 get_expected_rpm() {
@@ -79,7 +80,7 @@ rotate_logs() {
 main_loop() {
     mkdir -p "$LOG_DIR"
 
-    echo "fan-logger starting. Logs in $LOG_DIR"
+    logger -t fan-logger "Starting: logs in $LOG_DIR"
 
     while true; do
         rotate_logs
@@ -130,6 +131,6 @@ main_loop() {
 }
 
 # Signal handlers
-trap 'echo "fan-logger stopping"; exit 0' SIGTERM SIGINT
+trap 'logger -t fan-logger "Stopping"; exit 0' SIGTERM SIGINT
 
 main_loop
