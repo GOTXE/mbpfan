@@ -21,3 +21,6 @@ bin/*
 *.exe
 *.out
 
+# Logs (ignore content, track directory)
+logs/*
+!logs/.gitkeep
