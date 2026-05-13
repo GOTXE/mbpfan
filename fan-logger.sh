@@ -27,6 +27,14 @@ TEMP_FILE="$HWMON/temp1_input"
 declare -a temps=(70 75 80 85 88 90 92 94 96 98 100)
 declare -a rpms=(2100 2400 2600 2800 3200 3500 3900 4300 4800 5500 6100)
 
+get_top_processes() {
+    # Get top 3 processes by CPU usage (comma-separated, quoted)
+    ps aux --sort=-%cpu | tail -n +2 | head -3 | \
+        awk '{printf "%s(%.1f%%);", $11, $3}' | \
+        sed 's/;$//' | \
+        sed 's/;/|/g'
+}
+
 get_expected_rpm() {
     local temp=$1
     if [ $temp -le 70 ]; then echo 2100; return; fi
@@ -81,7 +89,7 @@ main_loop() {
 
         # Create header if new file
         if [ ! -f "$log_file" ]; then
-            echo "timestamp,temp_c,fan_rpm,expected_rpm,diff,status" > "$log_file"
+            echo "timestamp,temp_c,fan_rpm,expected_rpm,diff,status,top_3_processes" > "$log_file"
         fi
 
         # Read values
@@ -107,7 +115,8 @@ main_loop() {
 
         # Log entry
         local timestamp=$(date '+%Y-%m-%dT%H:%M:%S%z')
-        echo "$timestamp,$temp_c,$fan_rpm,$expected_rpm,$diff,$status" >> "$log_file"
+        local top_processes=$(get_top_processes)
+        echo "$timestamp,$temp_c,$fan_rpm,$expected_rpm,$diff,$status,\"$top_processes\"" >> "$log_file"
 
         # Sync every 10 entries to prevent data loss
         local lines=$(wc -l < "$log_file")

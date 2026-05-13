@@ -36,10 +36,10 @@ sudo journalctl -u mbpfan-logger -f
 **File**: `logs/fan-YYYY-MM-DD.csv`
 
 ```
-timestamp,temp_c,fan_rpm,expected_rpm,diff,status
-2026-05-13T22:19:32+0200,73,2889,2800,89,OK
-2026-05-13T22:19:33+0200,74,2900,2866,34,OK
-2026-05-13T22:19:34+0200,75,2950,2933,17,OK
+timestamp,temp_c,fan_rpm,expected_rpm,diff,status,top_3_processes
+2026-05-13T22:19:32+0200,73,2889,2800,89,OK,"claude(8.2%)|brave(4.7%)|node(2.1%)"
+2026-05-13T22:19:33+0200,74,2900,2866,34,OK,"claude(8.3%)|brave(4.7%)|node(2.1%)"
+2026-05-13T22:19:34+0200,75,2950,2933,17,OK,"claude(8.1%)|brave(4.8%)|node(2.2%)"
 ```
 
 **Columns**:
@@ -49,6 +49,7 @@ timestamp,temp_c,fan_rpm,expected_rpm,diff,status
 - `expected_rpm`: Speed from curve (70°C→2100, 100°C→6100)
 - `diff`: actual - expected (positive = too fast, negative = too slow)
 - `status`: OK | TOO_HIGH | TOO_LOW (based on ±250 RPM tolerance)
+- `top_3_processes`: Top 3 processes by CPU usage (command|cpu%; quoted field with pipes as separators)
 
 ## Analysis
 
