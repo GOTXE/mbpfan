@@ -1,0 +1,22 @@
+[Unit]
+Description=mbpfan Temperature and Fan Speed Logger
+After=mbpfan.service
+Wants=mbpfan.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/gtx/Documentos/mbpfan
+ExecStart=/home/gtx/Documentos/mbpfan/fan-logger.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+MemoryLimit=50M
+CPUQuota=5%
+
+[Install]
+WantedBy=multi-user.target
