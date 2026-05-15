@@ -29,7 +29,9 @@ declare -a temps=(70 75 80 85 88 90 92 94 96 98 100)
 declare -a rpms=(2100 2400 2600 2800 3200 3500 3900 4300 4800 5500 6100)
 
 # Temperature spike filter state (mirrors filter_temp_spikes() in src/mbpfan.c)
+# NOTE: writes result to $filtered_temp_c global — do NOT call via $() subshell
 last_valid_temp=0
+filtered_temp_c=0
 
 filter_temp_spikes() {
     local new_temp=$1
@@ -37,7 +39,7 @@ filter_temp_spikes() {
 
     if [ "$last_valid_temp" -eq 0 ]; then
         last_valid_temp=$new_temp
-        echo $new_temp
+        filtered_temp_c=$new_temp
         return
     fi
 
@@ -46,11 +48,11 @@ filter_temp_spikes() {
     if [ "$delta" -gt "$max_delta" ]; then
         # Upward spike: cap at +15°C/cycle (same as mbpfan)
         last_valid_temp=$(( last_valid_temp + max_delta ))
-        echo $last_valid_temp
+        filtered_temp_c=$last_valid_temp
     else
         # Downward or small change: accept as-is
         last_valid_temp=$new_temp
-        echo $new_temp
+        filtered_temp_c=$new_temp
     fi
 }
 
@@ -129,7 +131,7 @@ main_loop() {
         fi
 
         local temp_c=$((temp_raw / 1000))
-        local filtered_temp_c=$(filter_temp_spikes $temp_c)
+        filter_temp_spikes $temp_c   # sets $filtered_temp_c global
         local expected_rpm=$(get_expected_rpm $filtered_temp_c)
         local diff=$((fan_rpm - expected_rpm))
 
