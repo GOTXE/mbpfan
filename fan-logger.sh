@@ -28,6 +28,32 @@ TEMP_FILE="$HWMON/temp1_input"
 declare -a temps=(70 75 80 85 88 90 92 94 96 98 100)
 declare -a rpms=(2100 2400 2600 2800 3200 3500 3900 4300 4800 5500 6100)
 
+# Temperature spike filter state (mirrors filter_temp_spikes() in src/mbpfan.c)
+last_valid_temp=0
+
+filter_temp_spikes() {
+    local new_temp=$1
+    local max_delta=15
+
+    if [ "$last_valid_temp" -eq 0 ]; then
+        last_valid_temp=$new_temp
+        echo $new_temp
+        return
+    fi
+
+    local delta=$(( new_temp - last_valid_temp ))
+
+    if [ "$delta" -gt "$max_delta" ]; then
+        # Upward spike: cap at +15°C/cycle (same as mbpfan)
+        last_valid_temp=$(( last_valid_temp + max_delta ))
+        echo $last_valid_temp
+    else
+        # Downward or small change: accept as-is
+        last_valid_temp=$new_temp
+        echo $new_temp
+    fi
+}
+
 get_top_processes() {
     # Get top 3 processes by CPU usage (comma-separated, quoted)
     ps aux --sort=-%cpu 2>/dev/null | tail -n +2 | head -3 | \
@@ -90,7 +116,7 @@ main_loop() {
 
         # Create header if new file
         if [ ! -f "$log_file" ]; then
-            echo "timestamp,temp_c,fan_rpm,expected_rpm,diff,status,top_3_processes" > "$log_file"
+            echo "timestamp,temp_c,filtered_temp_c,fan_rpm,expected_rpm,diff,status,top_3_processes" > "$log_file"
         fi
 
         # Read values
@@ -103,10 +129,11 @@ main_loop() {
         fi
 
         local temp_c=$((temp_raw / 1000))
-        local expected_rpm=$(get_expected_rpm $temp_c)
+        local filtered_temp_c=$(filter_temp_spikes $temp_c)
+        local expected_rpm=$(get_expected_rpm $filtered_temp_c)
         local diff=$((fan_rpm - expected_rpm))
 
-        # Determine status
+        # Determine status (based on filtered temp, same as mbpfan)
         local status="OK"
         if [ $fan_rpm -gt $((expected_rpm + 250)) ]; then
             status="TOO_HIGH"
@@ -117,7 +144,7 @@ main_loop() {
         # Log entry
         local timestamp=$(date '+%Y-%m-%dT%H:%M:%S%z')
         local top_processes=$(get_top_processes)
-        echo "$timestamp,$temp_c,$fan_rpm,$expected_rpm,$diff,$status,\"$top_processes\"" >> "$log_file"
+        echo "$timestamp,$temp_c,$filtered_temp_c,$fan_rpm,$expected_rpm,$diff,$status,\"$top_processes\"" >> "$log_file"
 
         # Sync every 10 entries to prevent data loss
         local lines=$(wc -l < "$log_file")

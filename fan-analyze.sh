@@ -35,19 +35,34 @@ analyze_log() {
     echo "═══════════════════════════════════════════════════════════"
     echo ""
 
+    # Detect format: new format has filtered_temp_c column (8 fields), old has 7
+    local ncols=$(head -1 "$log_file" | tr ',' '\n' | wc -l)
+    local col_rpm=3 col_exp=4 col_diff=5 col_status=6
+    if [ "$ncols" -ge 8 ]; then
+        col_rpm=4; col_exp=5; col_diff=6; col_status=7
+    fi
+
     # Extract columns
     local temps=$(echo "$data" | cut -d, -f2)
-    local rpms=$(echo "$data" | cut -d, -f3)
-    local expected=$(echo "$data" | cut -d, -f4)
-    local diffs=$(echo "$data" | cut -d, -f5)
-    local status=$(echo "$data" | cut -d, -f6)
+    local filtered=$(echo "$data" | cut -d, -f3)
+    local rpms=$(echo "$data" | cut -d, -f$col_rpm)
+    local expected=$(echo "$data" | cut -d, -f$col_exp)
+    local diffs=$(echo "$data" | cut -d, -f$col_diff)
+    local status=$(echo "$data" | cut -d, -f$col_status)
 
     # Temperature stats
-    echo "📊 TEMPERATURE"
+    echo "📊 TEMPERATURE (raw sensor)"
     echo "  Current entries: $(echo "$data" | wc -l)"
     echo "  Min:  $(echo "$temps" | sort -n | head -1)°C"
     echo "  Max:  $(echo "$temps" | sort -n | tail -1)°C"
     echo "  Avg:  $(echo "$temps" | awk '{sum+=$1} END {printf "%.1f", sum/NR}')°C"
+    if [ "$ncols" -ge 8 ]; then
+        echo ""
+        echo "📊 TEMPERATURE (filtered, as seen by mbpfan)"
+        echo "  Min:  $(echo "$filtered" | sort -n | head -1)°C"
+        echo "  Max:  $(echo "$filtered" | sort -n | tail -1)°C"
+        echo "  Avg:  $(echo "$filtered" | awk '{sum+=$1} END {printf "%.1f", sum/NR}')°C"
+    fi
     echo ""
 
     # Fan RPM stats
@@ -91,9 +106,9 @@ analyze_log() {
 
     # Peak events
     echo "📈 PEAK EVENTS (Top 3 fan speeds)"
-    echo "$data" | sort -t, -k3 -rn | head -3 | awk -F, '{
+    echo "$data" | sort -t, -k$col_rpm -rn | head -3 | awk -F, -v cr=$col_rpm -v ce=$col_exp -v cd=$col_diff '{
         printf "  %s | Temp: %d°C, RPM: %d (expected: %d, diff: %d)\n",
-        $1, $2, $3, $4, $5
+        $1, $2, $cr, $ce, $cd
     }'
     echo ""
 
@@ -108,7 +123,7 @@ if [ "$1" = "--all" ]; then
     for log in "$LOG_DIR"/fan-*.csv "$LOG_DIR"/fan-*.csv.gz; do
         if [ -f "$log" ]; then
             if [[ "$log" == *.gz ]]; then
-                zcat "$log" | (cat <(echo "timestamp,temp_c,fan_rpm,expected_rpm,diff,status"); tail -n +2) > /tmp/fan-analyze-tmp.csv
+                zcat "$log" > /tmp/fan-analyze-tmp.csv
                 analyze_log /tmp/fan-analyze-tmp.csv
             else
                 analyze_log "$log"
