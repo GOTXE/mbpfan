@@ -104,6 +104,28 @@ static unsigned short filter_temp_spikes(unsigned short new_temp)
     return new_temp;
 }
 
+typedef struct {
+    int temp_c;
+    int rpm;
+} t_curve_point;
+
+static const t_curve_point fan_curve[] = {
+    {70, 2100},
+    {75, 2400},
+    {80, 2600},
+    {85, 2800},
+    {88, 3200},
+    {90, 3500},
+    {92, 3900},
+    {94, 4300},
+    {96, 4800},
+    {98, 5500},
+    {100, 6100},
+};
+
+static const size_t fan_curve_len = sizeof(fan_curve) / sizeof(fan_curve[0]);
+static const int max_rpm_drop_per_cycle = 250;
+
 t_sensors *sensors = NULL;
 t_fans *fans = NULL;
 char applesmc_path[PATH_MAX];
@@ -480,6 +502,73 @@ unsigned short get_temp(t_sensors *sensors)
     return temp / 1000;
 }
 
+static int clamp_fan_speed(const t_fans *fan, int speed)
+{
+    if (speed < fan->fan_min_speed) {
+        return fan->fan_min_speed;
+    }
+    if (speed > fan->fan_max_speed) {
+        return fan->fan_max_speed;
+    }
+    return speed;
+}
+
+static int interpolate_curve_speed(int temp_c)
+{
+    size_t i;
+
+    if (temp_c <= fan_curve[0].temp_c) {
+        return fan_curve[0].rpm;
+    }
+
+    for (i = 1; i < fan_curve_len; ++i) {
+        const t_curve_point *prev = &fan_curve[i - 1];
+        const t_curve_point *next = &fan_curve[i];
+
+        if (temp_c <= next->temp_c) {
+            double temp_span = (double)(next->temp_c - prev->temp_c);
+            double rpm_span = (double)(next->rpm - prev->rpm);
+            double pos = (double)(temp_c - prev->temp_c);
+            return (int)lround(prev->rpm + (pos / temp_span) * rpm_span);
+        }
+    }
+
+    return fan_curve[fan_curve_len - 1].rpm;
+}
+
+static int compute_curve_fan_speed(t_fans *fan, int temp_c)
+{
+    int target_speed;
+
+    if (temp_c >= 102) {
+        mbp_log(LOG_CRIT, "Critical CPU temperature detected: %dC. Forcing max fan speed.", temp_c);
+        return fan->fan_max_speed;
+    }
+
+    if (temp_c >= 100) {
+        return fan->fan_max_speed;
+    }
+
+    target_speed = interpolate_curve_speed(temp_c);
+
+    if (temp_c >= 98 && target_speed < 5200) {
+        target_speed = 5200;
+    } else if (temp_c >= 96 && target_speed < 4400) {
+        target_speed = 4400;
+    }
+
+    target_speed = clamp_fan_speed(fan, target_speed);
+
+    // Downward ramp: reduce in 4 cycles to avoid abrupt drops
+    if (fan->old_speed > 0 && target_speed < fan->old_speed) {
+        int diff = fan->old_speed - target_speed;
+        int max_drop = (diff + 3) / 4;
+        target_speed = max(target_speed, fan->old_speed - max_drop);
+    }
+
+    return clamp_fan_speed(fan, target_speed);
+}
+
 void retrieve_settings(const char *settings_path, t_fans *fans)
 {
     Settings *settings = NULL;
@@ -516,7 +605,7 @@ void retrieve_settings(const char *settings_path, t_fans *fans)
             while (fan != NULL) {
 
                 char *config_key;
-                config_key = smprintf("min_fan%d_speed", fan->fan_id);
+                config_key = smprintf("min_fan%d_speed", fan->fan_id + 1);
                 /* Read configfile values */
                 result = settings_get_int(settings, "general", config_key);
                 if (result != 0) {
@@ -524,7 +613,7 @@ void retrieve_settings(const char *settings_path, t_fans *fans)
                 }
                 free(config_key);
 
-                config_key = smprintf("max_fan%d_speed", fan->fan_id);
+                config_key = smprintf("max_fan%d_speed", fan->fan_id + 1);
                 result = settings_get_int(settings, "general", config_key);
 
                 if (result != 0) {
@@ -646,8 +735,7 @@ int get_max_mhz(void)
 
 void mbpfan()
 {
-    int old_temp, new_temp, fan_speed, steps;
-    int temp_change;
+    int new_temp, fan_speed;
 
     sensors = retrieve_sensors();
     fans = retrieve_fans();
@@ -677,10 +765,6 @@ void mbpfan()
 
     fan = fans;
     while (fan != NULL) {
-
-        fan->step_up = (float)(fan->fan_max_speed - fan->fan_min_speed) / (float)((max_temp - high_temp) * (max_temp - high_temp + 1) / 2.0);
-
-        fan->step_down = (float)(fan->fan_max_speed - fan->fan_min_speed) / (float)((max_temp - low_temp) * (max_temp - low_temp + 1) / 2.0);
         fan = fan->next;
     }
 
@@ -702,37 +786,16 @@ recalibrate:
             do_reload = 0;
         }
 
-        old_temp = new_temp;
         new_temp = get_temp(sensors);
         new_temp = filter_temp_spikes(new_temp);
 
         fan = fans;
 
         while (fan != NULL) {
-            fan_speed = fan->old_speed;
-
-            if (new_temp >= max_temp && fan->old_speed != fan->fan_max_speed) {
-                fan_speed = fan->fan_max_speed;
-            }
-
-            if (new_temp <= low_temp && fan_speed != fan->fan_min_speed) {
-                fan_speed = fan->fan_min_speed;
-            }
-
-            temp_change = new_temp - old_temp;
-
-            if (temp_change > 0 && new_temp > high_temp && new_temp < max_temp) {
-                steps = (new_temp - high_temp) * (new_temp - high_temp + 1) / 2;
-                fan_speed = max(fan_speed, ceil(fan->fan_min_speed + steps * fan->step_up));
-            }
-
-            if (temp_change < 0 && new_temp > low_temp && new_temp < max_temp) {
-                steps = (max_temp - new_temp) * (max_temp - new_temp + 1) / 2;
-                fan_speed = min(fan_speed, floor(fan->fan_max_speed - steps * fan->step_down));
-            }
+            fan_speed = compute_curve_fan_speed(fan, new_temp);
 
             if (verbose) {
-                mbp_log(LOG_INFO, "Old Temp: %d New Temp: %d Fan: %s Speed: %d Max MHz: %d", old_temp, new_temp, fan->label, fan_speed, get_max_mhz());
+                mbp_log(LOG_INFO, "Curve Temp: %d Fan: %s Speed: %d Max MHz: %d", new_temp, fan->label, fan_speed, get_max_mhz());
             }
 
             set_fan_speed(fan, fan_speed);
