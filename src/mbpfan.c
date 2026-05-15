@@ -140,104 +140,104 @@ t_sensors *retrieve_sensors()
 {
     t_sensors *sensors_head = NULL;
     t_sensors *s = NULL;
-
     char *path = NULL;
-    char *path_begin = NULL;
-
-    const char *path_end = "_input";
     int sensors_found = 0;
+
+    // FILTER: Only read Package id 0 (temp1_input) from coretemp
+    // This avoids fake sensors from applesmc, pch, BAT0, etc.
+    // Package id 0 is the max of all CPU cores (what we want for fan control)
 
     if (!is_modern_sensors_path()) {
         if (verbose) {
-            mbp_log(LOG_INFO, "Using legacy path for kernel < 3.15.0");
+            mbp_log(LOG_INFO, "Using legacy path for kernel < 3.15.0 - filtering coretemp only");
         }
+        // Legacy: /sys/devices/platform/coretemp.0/temp1_input (Package id 0)
+        path = strdup("/sys/devices/platform/coretemp.0/temp1_input");
 
-        path_begin = strdup("/sys/devices/platform/coretemp.0/temp");
+        FILE *file = fopen(path, "r");
+        if (file != NULL) {
+            s = (t_sensors *)malloc(sizeof(t_sensors));
+            s->path = strdup(path);
+            fscanf(file, "%u", &s->temperature);
+            s->file = file;
+            sensors_head = s;
+            sensors_head->next = NULL;
+            sensors_found++;
+        }
+        free(path);
 
     } else {
-
         if (verbose) {
-            mbp_log(LOG_INFO, "Using new sensor path for kernel >= 3.15.0 or some CentOS versions with kernel 3.10.0 ");
+            mbp_log(LOG_INFO, "Using new sensor path (kernel >= 3.15.0) - reading coretemp Package id 0 only");
         }
 
-        // loop over up to 6 processors
+        // Modern: /sys/devices/platform/coretemp.0/hwmon/hwmonX/temp1_input (Package id 0)
         int processor;
         for (processor = 0; processor < NUM_PROCESSORS; processor++) {
 
-            if (path_begin != NULL) {
-                free(path_begin);
-            }
-            path_begin = smprintf("/sys/devices/platform/coretemp.%d/hwmon/hwmon", processor);
-
+            char *path_begin = smprintf("/sys/devices/platform/coretemp.%d/hwmon/hwmon", processor);
             int counter;
+
             for (counter = 0; counter < NUM_HWMONS; counter++) {
 
                 char *hwmon_path = smprintf("%s%d", path_begin, counter);
-
                 int res = access(hwmon_path, R_OK);
+
                 if (res == 0) {
+                    // Found hwmon, now read temp1_input (Package id 0)
+                    path = smprintf("%s/temp1_input", hwmon_path);
 
-                    free(path_begin);
-                    path_begin = smprintf("%s/temp", hwmon_path);
+                    FILE *file = fopen(path, "r");
+                    if (file != NULL) {
+                        s = (t_sensors *)malloc(sizeof(t_sensors));
+                        s->path = strdup(path);
+                        fscanf(file, "%u", &s->temperature);
+                        s->file = file;
 
-                    if (verbose) {
-                        mbp_log(LOG_INFO, "Found hwmon path at %s", path_begin);
+                        if (sensors_head == NULL) {
+                            sensors_head = s;
+                            sensors_head->next = NULL;
+                        } else {
+                            t_sensors *tmp = sensors_head;
+                            while (tmp->next != NULL) {
+                                tmp = tmp->next;
+                            }
+                            tmp->next = s;
+                            tmp->next->next = NULL;
+                        }
+
+                        sensors_found++;
+
+                        if (verbose) {
+                            mbp_log(LOG_INFO, "Found coretemp Package id 0 at %s", path);
+                        }
                     }
 
+                    free(path);
                     free(hwmon_path);
-                    break;
+                    free(path_begin);
+
+                    // Only need first processor, break
+                    goto done_reading;
                 }
 
                 free(hwmon_path);
             }
 
-            int core = 0;
-            for (core = 0; core < NUM_TEMP_INPUTS; core++) {
-                path = smprintf("%s%d%s", path_begin, core, path_end);
-
-                FILE *file = fopen(path, "r");
-
-                if (file != NULL) {
-                    s = (t_sensors *)malloc(sizeof(t_sensors));
-                    s->path = strdup(path);
-                    fscanf(file, "%u", &s->temperature);
-
-                    if (sensors_head == NULL) {
-                        sensors_head = s;
-                        sensors_head->next = NULL;
-
-                    } else {
-                        t_sensors *tmp = sensors_head;
-
-                        while (tmp->next != NULL) {
-                            tmp = tmp->next;
-                        }
-
-                        tmp->next = s;
-                        tmp->next->next = NULL;
-                    }
-
-                    s->file = file;
-                    sensors_found++;
-                }
-
-                free(path);
-                path = NULL;
-            }
+            free(path_begin);
         }
+
+        done_reading:;
     }
 
     if (verbose) {
-        mbp_log(LOG_INFO, "Found %d sensors", sensors_found);
+        mbp_log(LOG_INFO, "Found %d sensor(s) - using coretemp Package id 0 only", sensors_found);
     }
 
     if (sensors_found == 0) {
-        mbp_log(LOG_CRIT, "mbpfan could not detect any temp sensor. Please contact the developer.");
+        mbp_log(LOG_CRIT, "mbpfan could not detect coretemp Package id 0 sensor. Please check /sys/devices/platform/coretemp.0/hwmon/");
         exit(EXIT_FAILURE);
     }
-
-    free(path_begin);
-    path_begin = NULL;
 
     return sensors_head;
 }
