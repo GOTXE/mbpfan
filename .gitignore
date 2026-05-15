@@ -21,9 +21,8 @@ bin/*
 *.exe
 *.out
 
-# Logs (ignore content, track directory)
-logs/*
-!logs/.gitkeep
+# Logs (local only, not part of the program)
+logs/
 
 # Technical documentation (local only)
 tech_docs/
