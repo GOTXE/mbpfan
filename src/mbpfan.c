@@ -78,6 +78,32 @@ int max_temp = 86;  // do not set it > 90
 
 int polling_interval = 1;
 
+// Temperature spike filter: reject upward changes >15°C per cycle
+static unsigned short last_valid_temp = 0;
+
+static unsigned short filter_temp_spikes(unsigned short new_temp)
+{
+    const int MAX_DELTA_PER_CYCLE = 15;  // °C per cycle - allows real ramps, rejects spikes
+
+    if (last_valid_temp == 0) {
+        last_valid_temp = new_temp;
+        return new_temp;
+    }
+
+    int delta = (int)new_temp - (int)last_valid_temp;
+
+    // Rate limiter: upward changes capped at 15°C/cycle
+    // Allows gradual heating (60→75→90°C), rejects sensor spikes (60→91 in 1 cycle)
+    if (delta > MAX_DELTA_PER_CYCLE) {
+        last_valid_temp += MAX_DELTA_PER_CYCLE;
+        return last_valid_temp;
+    }
+
+    // Downward changes allowed without limit (real cooling)
+    last_valid_temp = new_temp;
+    return new_temp;
+}
+
 t_sensors *sensors = NULL;
 t_fans *fans = NULL;
 char applesmc_path[PATH_MAX];
@@ -646,6 +672,7 @@ void mbpfan()
     set_fans_man(fans);
 
     new_temp = get_temp(sensors);
+    new_temp = filter_temp_spikes(new_temp);
     set_fan_minimum_speed(fans);
 
     fan = fans;
@@ -677,6 +704,7 @@ recalibrate:
 
         old_temp = new_temp;
         new_temp = get_temp(sensors);
+        new_temp = filter_temp_spikes(new_temp);
 
         fan = fans;
 
